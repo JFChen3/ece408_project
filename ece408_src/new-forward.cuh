@@ -58,8 +58,8 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
    Code to unroll input matrix to recast convolution layer as matrix multiply
 */
 
-    #define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
-
+    #define x3d(i2, i1, i0) x[(i2) * (H * W) + (i1) * (W) + i0]
+    #define x_unroll2d(i1, i0) x_unroll[(i1) * (W) + i0]
 
     int c, s, h_out, w_out, h_unroll, w_base, p, q;
     int b = blockIdx.x;
@@ -79,7 +79,7 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
         for(p = 0; p < K; p++){
             for(q=0; q<K; q++){
                 w_unroll = w_base + p * K + q;
-                x_unroll(h_unroll, w_unroll) = x4d(b, c, h_out + p, w_out + q); //Need to compute proper indices for this line!!
+                x_unroll2d(h_unroll, w_unroll) = x3d(c, h_out + p, w_out + q); //Need to compute proper indices for this line!!
             }
 
         }
@@ -122,11 +122,24 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     const int H_grid = ceil((1.0*H_out) / TILE_WIDTH);
     const int Z = H_grid * W_grid;
 
-    dim3 gridDim(B, M, Z);
-    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
+    //Unroll matrix
+    int W_unroll = C * K * K;
+    int H_unroll = H_out * W_out;
+
+    int num_threads_unroll = C * H_out * W_out;
+    int num_blocks_unroll = ceil(float(num_threads_unroll)/TILE_WIDTH);
+
+    float *x_unroll_host; //Unrolled x matrix
+    float *x_unroll_device;
+    cudaMalloc((void**) &x_unroll, W_unroll * H_unroll * sizeof(float));
+    cudaMemcpy(x_unroll_device, x_unroll_host, W_unroll * H_unroll * sizeof(float), cudaMemcpyHostToDevice);
+    unroll_kernel<<<num_blocks_unroll, TILE_WIDTH>>>(x, x_unroll, C, H, W, K);
+
+    //dim3 gridDim(B, M, Z);
+    //dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 
     // Call the kernel
-    forward_kernel<<<gridDim, blockDim>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
+    //forward_kernel<<<gridDim, blockDim>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
