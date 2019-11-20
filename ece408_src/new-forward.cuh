@@ -53,6 +53,47 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 #undef k4d
 }
 
+__global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, int K) {
+/*
+   Code to unroll input matrix to recast convolution layer as matrix multiply
+*/
+
+    #define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
+
+
+    int c, s, h_out, w_out, h_unroll, w_base, p, q;
+    int b = blockIdx.x;
+    int t = blockIdx.x*blockDim.x + threadIdx.x;
+    int H_out = H - K + 1;
+    int W_out = W - K + 1;
+    int W_unroll = H_out * W_out;
+
+    if (t < C * W_unroll) {
+
+        c = t / W_unroll;
+        s = t % W_unroll;
+        h_out = s / W_out;
+        w_out = s % W_out;
+        h_unroll = h_out * W_out + w_out;
+        w_base = c * K * K;
+        for(p = 0; p < K; p++){
+            for(q=0; q<K; q++){
+                w_unroll = w_base + p * K + q;
+                x_unroll(h_unroll, w_unroll) = x4d(b, c, h_out + p, w_out + q); //Need to compute proper indices for this line!!
+            }
+
+        }
+    }
+}
+
+__global__ void foward_matmul_kernel(){
+/* Forward pass using matrix multiplication
+
+*/
+
+}
+
+
 /* 
    This function is called by new-inl.h
    Any code you write should be executed by this function.
