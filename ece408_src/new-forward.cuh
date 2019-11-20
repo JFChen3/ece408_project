@@ -61,8 +61,8 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
     #define x3d(i2, i1, i0) x[(i2) * (H * W) + (i1) * (W) + i0]
     #define x_unroll2d(i1, i0) x_unroll[(i1) * (W) + i0]
 
-    int c, s, h_out, w_out, h_unroll, w_base, p, q;
-    int b = blockIdx.x;
+    int c, s, h_out, w_out, h_unroll, w_unroll, w_base, p, q;
+    //int b = blockIdx.x;
     int t = blockIdx.x*blockDim.x + threadIdx.x;
     int H_out = H - K + 1;
     int W_out = W - K + 1;
@@ -86,14 +86,14 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
     }
 }
 
-__global__ void foward_matmul_kernel(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
+__global__ void forward_matmul_kernel(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                      int numCRows, int numCColumns){
 /* Forward pass using matrix multiplication
 
 */
 
     __shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
-	__shared__ float subTIleB[TILE_WIDTH][TILE_WIDTH];
+	__shared__ float subTileB[TILE_WIDTH][TILE_WIDTH];
 
 	int bx = blockIdx.x;
 	int by = blockIdx.y;
@@ -170,11 +170,17 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     int num_threads_unroll = C * H_out * W_out;
     int num_blocks_unroll = ceil(float(num_threads_unroll)/TILE_WIDTH);
 
-    float *x_unroll_host; //Unrolled x matrix
+    //float *x_unroll_host; //Unrolled x matrix
     float *x_unroll_device;
-    cudaMalloc((void**) &x_unroll, W_unroll * H_unroll * sizeof(float));
-    cudaMemcpy(x_unroll_device, x_unroll_host, W_unroll * H_unroll * sizeof(float), cudaMemcpyHostToDevice);
-    unroll_kernel<<<num_blocks_unroll, TILE_WIDTH>>>(x, x_unroll, C, H, W, K);
+    cudaMalloc((void**) &x_unroll_device, W_unroll * H_unroll * sizeof(float));
+    //cudaMemcpy(x_unroll_device, x_unroll_host, W_unroll * H_unroll * sizeof(float), cudaMemcpyHostToDevice);
+    unroll_kernel<<<num_blocks_unroll, TILE_WIDTH>>>(x.dptr_, x_unroll_device, C, H, W, K);
+
+    //Initialize block and grid dimensions
+    dim3 gridDim(B, M, Z);
+    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
+
+    forward_matmul_kernel<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr_, K, H_unroll, H_unroll, W_unroll, K, W_unroll);
 
     //dim3 gridDim(B, M, Z);
     //dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
