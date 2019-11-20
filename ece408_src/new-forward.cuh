@@ -86,11 +86,52 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
     }
 }
 
-__global__ void foward_matmul_kernel(){
+__global__ void foward_matmul_kernel(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
+                                     int numCRows, int numCColumns){
 /* Forward pass using matrix multiplication
 
 */
 
+    __shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
+	__shared__ float subTIleB[TILE_WIDTH][TILE_WIDTH];
+
+	int bx = blockIdx.x;
+	int by = blockIdx.y;
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+
+	int Row = by * TILE_WIDTH + ty;
+  	int Col = bx * TILE_WIDTH + tx;
+
+  	float Pvalue = 0;
+
+  // Loop over the M and N tiles required to compute the P element
+  // The code assumes that the Width is a multiple of TILE_WIDTH!
+    for (int m = 0; m < (numAColumns-1)/TILE_WIDTH + 1; ++m) {
+		// Collaborative loading of M and N tiles into shared memory
+		if(Row < numARows && m*TILE_WIDTH+tx < numAColumns) {
+		  subTileA[ty][tx] = A[Row*numAColumns + m*TILE_WIDTH+tx];
+		}
+		else {
+		  subTileA[ty][tx] = 0;
+		}
+		if (m*TILE_WIDTH+ty < numBRows && Col < numBColumns) {
+		  subTileB[ty][tx] = B[(m*TILE_WIDTH+ty)*numBColumns+Col];
+		}
+		else {
+		  subTileB[ty][tx] = 0;
+		}
+		__syncthreads();
+		if (Row < numCRows && Col < numCColumns) {
+		  for (int k = 0; k < TILE_WIDTH; ++k) {
+			Pvalue += subTileA[ty][k] * subTileB[k][tx];
+		  }
+		}
+		__syncthreads();
+    }
+    if (Row < numCRows && Col < numCColumns) {
+		C[Row*numCColumns+Col] = Pvalue;
+    }
 }
 
 
