@@ -98,9 +98,8 @@ __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, in
     	for (int k=0; k < width; ++k){
       		Pvalue += A[row*numAColumns+k] * B[k*numBColumns+col];
     	}
-    	if ((row == 0)&&(col == 200)) printf("%f", Pvalue);
-    		C[row*numBColumns+col] = Pvalue;
-  		}
+    	C[row*numBColumns+col] = Pvalue;
+  	}
 }
 
 
