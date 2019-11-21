@@ -34,10 +34,21 @@ commands:
     #- nvprof --kernels "::forward:1" --analysis-metrics -o forward1_analysis_m3_d2.nvprof python m3.1.py 1000 # execute code
     #- nvprof --kernels "::forward:2" --analysis-metrics -o forward2_analysis_m3_d2.nvprof python m3.1.py 1000 # execute code
 
-    - nvprof --kernels "::forward:1" --analysis-metrics -o forward1_analysis_m3_d3.nvprof python m3.1.py 10000 # execute code
-    - nvprof --kernels "::forward:2" --analysis-metrics -o forward2_analysis_m3_d3.nvprof python m3.1.py 10000 # execute code
+    #- nvprof --kernels "::forward:1" --analysis-metrics -o forward1_analysis_m3_d3.nvprof python m3.1.py 10000 # execute code
+    #- nvprof --kernels "::forward:2" --analysis-metrics -o forward2_analysis_m3_d3.nvprof python m3.1.py 10000 # execute code
 
   
     
-    #- /usr/bin/time python m4.1.py # execute code
-    #- /usr/bin/time python final.py # execute code
+    #- /usr/bin/time python m4.1.py 100 # execute code
+    #- /usr/bin/time python m4.1.py 1000 # execute code
+    #- /usr/bin/time python m4.1.py 10000 # execute code
+    #- nvprof --kernels "::forward:1" --analysis-metrics -o forward1_analysis_m4_d1_o3.nvprof python m4.1.py 100 # execute code
+    #- nvprof --kernels "::forward:2" --analysis-metrics -o forward2_analysis_m4_d1_o3.nvprof python m4.1.py 100 # execute code
+
+    #- nvprof --kernels "::forward:1" --analysis-metrics -o forward1_analysis_m4_d2_o3.nvprof python m4.1.py 1000 # execute code
+    #- nvprof --kernels "::forward:2" --analysis-metrics -o forward2_analysis_m4_d2_o3.nvprof python m3.1.py 1000 # execute code
+
+    - nvprof --kernels "::forward:1" --analysis-metrics -o forward1_analysis_m4_d3_o3.nvprof python m4.1.py 10000 # execute code
+    - nvprof --kernels "::forward:2" --analysis-metrics -o forward2_analysis_m4_d3_o3.nvprof python m4.1.py 10000 # execute code
+
+   #- /usr/bin/time python final.py # execute code

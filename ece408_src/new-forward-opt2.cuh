@@ -4,7 +4,6 @@
 
 #define TILE_WIDTH 8
 #define MAX_THREADS 1024
-#define MAX_KERNEL_SIZE 7200
 
 #include <mxnet/base.h>
 
@@ -12,8 +11,6 @@ namespace mxnet
 {
 namespace op
 {
-
-__constant__ float kernel[MAX_KERNEL_SIZE];
 
 __global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K)
 {
@@ -100,7 +97,7 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
 __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                   int numCRows, int numCColumns){
 
-    int row  = blockIdx.y*blockDim.y + threadIdx.y;
+	int row  = blockIdx.y*blockDim.y + threadIdx.y;
     int col  = blockIdx.x*blockDim.x + threadIdx.x;
     int width = numAColumns;
   
@@ -116,48 +113,48 @@ __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, in
 
 
 
-__global__ void forward_matmul_kernel(float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
+__global__ void forward_matmul_kernel(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                      int numCRows, int numCColumns){
 /* Forward pass using matrix multiplication
 
 */
 
-    //__shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float subTileB[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
+	__shared__ float subTileB[TILE_WIDTH][TILE_WIDTH];
 
-    int bx = blockIdx.x;
-    int by = blockIdx.y;
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
+	int bx = blockIdx.x;
+	int by = blockIdx.y;
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
 
-    int Row = by * TILE_WIDTH + ty;
-    int Col = bx * TILE_WIDTH + tx;
+	int Row = by * TILE_WIDTH + ty;
+  	int Col = bx * TILE_WIDTH + tx;
 
-    float Pvalue = 0;
+  	float Pvalue = 0;
 
   // Loop over the M and N tiles required to compute the P element
   // The code assumes that the Width is a multiple of TILE_WIDTH!
     for (int m = 0; m < (numAColumns-1)/TILE_WIDTH + 1; ++m) {
-        // Collaborative loading of M and N tiles into shared memory
-        //if(Row < numARows && m*TILE_WIDTH+tx < numAColumns) {
-        //  subTileA[ty][tx] = A[Row*numAColumns + m*TILE_WIDTH+tx];
-        //}
-        //else {
-        //  subTileA[ty][tx] = 0;
-        //}
-        if (m*TILE_WIDTH+ty < numBRows && Col < numBColumns) {
-          subTileB[ty][tx] = B[(m*TILE_WIDTH+ty)*numBColumns+Col];
-        }
-        else {
-          subTileB[ty][tx] = 0;
-        }
-        __syncthreads();
-        if (Row < numCRows && Col < numCColumns) {
-          for (int k = 0; k < TILE_WIDTH; ++k) {
-                Pvalue += kernel[Row*numAColumns+m*TILE_WIDTH+k] * subTileB[k][tx];
-          }
-        }
-        __syncthreads();
+		// Collaborative loading of M and N tiles into shared memory
+		if(Row < numARows && m*TILE_WIDTH+tx < numAColumns) {
+		  subTileA[ty][tx] = A[Row*numAColumns + m*TILE_WIDTH+tx];
+		}
+		else {
+		  subTileA[ty][tx] = 0;
+		}
+		if (m*TILE_WIDTH+ty < numBRows && Col < numBColumns) {
+		  subTileB[ty][tx] = B[(m*TILE_WIDTH+ty)*numBColumns+Col];
+		}
+		else {
+		  subTileB[ty][tx] = 0;
+		}
+		__syncthreads();
+		if (Row < numCRows && Col < numCColumns) {
+		  for (int k = 0; k < TILE_WIDTH; ++k) {
+			Pvalue += subTileA[ty][k] * subTileB[k][tx];
+		  }
+		}
+		__syncthreads();
     }
     if (Row < numCRows && Col < numCColumns) {
 		C[Row*numCColumns+Col] = Pvalue;
@@ -209,7 +206,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     //float *x_unroll_host; //Unrolled x matrix
     float *x_unroll_device;
     cudaMalloc((void**) &x_unroll_device, W_unroll * H_unroll * sizeof(float));
-
+    //cudaMemcpy(x_unroll_device, x_unroll_host, W_unroll * H_unroll * sizeof(float), cudaMemcpyHostToDevice);
 	int numARows = M;
 	int numACols = C*K*K;
 	int numBRows = C*K*K;
@@ -218,20 +215,13 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 	int numCCols = H_out*W_out;
 	float* Y_ptr = y.dptr_;
 	float* X_ptr = x.dptr_;
-
-    printf("numARows is %d\n", numARows);
-    printf("numACols is %d\n", numACols);
-    printf("K is %d\n", K);
-
-    cudaMemcpyToSymbol(kernel, w.dptr_, sizeof(float)*numARows*numACols); //Store kernel in constant memory
-
     dim3 gridDim(ceil((1.0*numCCols)/TILE_WIDTH), ceil((1.0*numCRows)/TILE_WIDTH), 1);
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 	for (int n=0; n<B; ++n) {
 		//printf("%c",x.dptr_);
 		unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(X_ptr+n*C*H*W, x_unroll_device, C, H, W, K);
 		//cudaDeviceSynchronize();
-		forward_matmul_kernel<<<gridDim, blockDim>>>(x_unroll_device, Y_ptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+		forward_matmul_kernel<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, Y_ptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
 		//cudaDeviceSynchronize();
 	}
     
