@@ -14,12 +14,7 @@ namespace mxnet
 namespace op
 {
 
-<<<<<<< HEAD
 __constant__ float kernel[MAX_KERNEL_SIZE];
-=======
-__constant__ mshadow kernel1[1*5*5];
-__constant__ float kernel2[1*5*5];
->>>>>>> 38c806aa7c3eeffccf71c5ce8abbb16604dd07df
 
 __global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K)
 {
@@ -229,7 +224,6 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 	int numBCols = H_out*W_out;
 	int numCRows = M;
 	int numCCols = H_out*W_out;
-<<<<<<< HEAD
 	float* Y_ptr = y.dptr_;
 	float* X_ptr = x.dptr_;
 
@@ -239,19 +233,13 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 
     cudaMemcpyToSymbol(kernel, w.dptr_, sizeof(float)*numARows*numACols); //Store kernel in constant memory
 
-=======
->>>>>>> 38c806aa7c3eeffccf71c5ce8abbb16604dd07df
     dim3 gridDim(ceil((1.0*numCCols)/TILE_WIDTH), ceil((1.0*numCRows)/TILE_WIDTH), 1);
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 	for (int n=0; n<B; ++n) {
 		//printf("%c",x.dptr_);
 		unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(x.dptr+n*C*H*W, x_unroll_device, C, H, W, K);
 		//cudaDeviceSynchronize();
-<<<<<<< HEAD
-		forward_matmul_kernel<<<gridDim, blockDim>>>(x_unroll_device, Y_ptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
-=======
 		forward_matmul_kernel<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
->>>>>>> 38c806aa7c3eeffccf71c5ce8abbb16604dd07df
 		//cudaDeviceSynchronize();
 	}
     
