@@ -3,6 +3,7 @@
 #define MXNET_OPERATOR_NEW_FORWARD_CUH_
 
 #define TILE_WIDTH 16
+#define MAX_THREADS 1024
 
 #include <mxnet/base.h>
 
@@ -63,7 +64,7 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
 
     int c, s, h_out, w_out, h_unroll, w_unroll, w_base, p, q;
     //int b = blockIdx.x;
-    int t = blockIdx.x*blockDim.x + threadIdx.x;
+    int t = blockIdx.x*MAX_THREADS + threadIdx.x;
     int H_out = H - K + 1;
     int W_out = W - K + 1;
     int W_unroll = H_out * W_out;
@@ -85,6 +86,25 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
         }
     }
 }
+__global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
+                                  int numCRows, int numCColumns){
+
+	int row  = blockIdx.y*blockDim.y + threadIdx.y;
+    int col  = blockIdx.x*blockDim.x + threadIdx.x;
+    int width = numAColumns;
+  
+  	if ((row < numARows) && (col < numBColumns)){
+    	float Pvalue = 0;
+    	for (int k=0; k < width; ++k){
+      		Pvalue += A[row*numAColumns+k] * B[k*numBColumns+col];
+    	}
+    	if ((row == 0)&&(col == 200)) printf("%f", Pvalue);
+    		C[row*numBColumns+col] = Pvalue;
+  		}
+}
+
+
+
 
 __global__ void forward_matmul_kernel(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                      int numCRows, int numCColumns){
@@ -132,6 +152,12 @@ __global__ void forward_matmul_kernel(float* A, float* B, float* C, int numARows
     if (Row < numCRows && Col < numCColumns) {
 		C[Row*numCColumns+Col] = Pvalue;
     }
+	__syncthreads();
+	if ((bx == 0) && (by == 0) && (tx == 0) && (ty == 0)) {
+		printf("C: %f\n",C[0]);
+		printf("%d,%d\n",Row,Col);
+	}
+	__syncthreads();
 }
 
 
@@ -168,19 +194,27 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     int H_unroll = H_out * W_out;
 
     int num_threads_unroll = C * H_out * W_out;
-    int num_blocks_unroll = ceil(float(num_threads_unroll)/TILE_WIDTH);
+    int num_blocks_unroll = ceil(float(num_threads_unroll)/MAX_THREADS);
 
     //float *x_unroll_host; //Unrolled x matrix
     float *x_unroll_device;
     cudaMalloc((void**) &x_unroll_device, W_unroll * H_unroll * sizeof(float));
     //cudaMemcpy(x_unroll_device, x_unroll_host, W_unroll * H_unroll * sizeof(float), cudaMemcpyHostToDevice);
-    unroll_kernel<<<num_blocks_unroll, TILE_WIDTH>>>(x.dptr_, x_unroll_device, C, H, W, K);
+    unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(x.dptr_, x_unroll_device, C, H, W, K);
+	MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
+	int numARows = M;
+	int numACols = C*K*K;
+	int numBRows = C*K*K;
+	int numBCols = H_out*W_out;
+	int numCRows = M;
+	int numCCols = H_out*W_out;
+	//printf("unroll:%f\n", w.dptr_[0]);
 
-    //Initialize block and grid dimensions
-    dim3 gridDim(B, M, Z);
+    //Initialize block and grid dimensions for matrix mul
+    dim3 gridDim(ceil((1.0*numCCols)/TILE_WIDTH), ceil((1.0*numCRows)/TILE_WIDTH), 1);
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 
-    forward_matmul_kernel<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr_, K, H_unroll, H_unroll, W_unroll, K, W_unroll);
+    simple_matrix_mul<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr_, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
 
     //dim3 gridDim(B, M, Z);
     //dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
