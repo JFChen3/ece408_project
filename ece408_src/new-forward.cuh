@@ -1,4 +1,3 @@
-
 #ifndef MXNET_OPERATOR_NEW_FORWARD_CUH_
 #define MXNET_OPERATOR_NEW_FORWARD_CUH_
 
@@ -7,7 +6,6 @@
 #define MAX_KERNEL_SIZE 7200
 
 #include <mxnet/base.h>
-
 
 namespace mxnet
 {
@@ -72,12 +70,12 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
     int c, s, h_out, w_out, h_unroll, w_unroll, w_base, p, q;
     //int b = blockIdx.x;
     int t = blockIdx.x*blockDim.x + threadIdx.x;
-	if (t == 0) {
-		printf("K:%d", K);
-		printf("C:%d", C);
-		printf("H:%d", H);
-		printf("W:%d", W);
-	}
+//	if (t == 0) {
+//		printf("K:%d", K);
+//		printf("C:%d", C);
+//		printf("H:%d", H);
+//		printf("W:%d", W);
+//	}
     
 
     if (t < C * W_unroll) {
@@ -120,7 +118,6 @@ __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, in
 __global__ void forward_matmul_kernel(float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                      int numCRows, int numCColumns){
 /* Forward pass using matrix multiplication
-
 */
 
     //__shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
@@ -195,13 +192,6 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     const int H_out = H - K + 1;
     const int W_out = W - K + 1;
 
-	if (C == 1) {
-		cudaMemcpyToSymbol(kernel1, w, 1*5*5*sizeof(float));
-	}
-	else {
-		cudaMemcpyToSymbol(kernel2, w, 1*5*5*sizeof(float));
-	}
-
     // Set the kernel dimensions
     const int W_grid = ceil((1.0*W_out) / TILE_WIDTH);
     const int H_grid = ceil((1.0*H_out) / TILE_WIDTH);
@@ -237,9 +227,9 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 	for (int n=0; n<B; ++n) {
 		//printf("%c",x.dptr_);
-		unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(x.dptr+n*C*H*W, x_unroll_device, C, H, W, K);
+		unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(X_ptr+n*C*H*W, x_unroll_device, C, H, W, K);
 		//cudaDeviceSynchronize();
-		forward_matmul_kernel<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+		forward_matmul_kernel<<<gridDim, blockDim>>>(x_unroll_device, Y_ptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
 		//cudaDeviceSynchronize();
 	}
     
