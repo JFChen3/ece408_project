@@ -58,19 +58,25 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
 /*
    Code to unroll input matrix to recast convolution layer as matrix multiply
 */
-
-    #define x3d(i2, i1, i0) x[(i2) * (H * W) + (i1) * (W) + i0]
-    #define x_unroll2d(i1, i0) x_unroll[(i1) * (W) + i0]
-
-    int c, s, h_out, w_out, h_unroll, w_unroll, w_base, p, q;
-    //int b = blockIdx.x;
-    int t = blockIdx.x*MAX_THREADS + threadIdx.x;
-    int H_out = H - K + 1;
+	int H_out = H - K + 1;
     int W_out = W - K + 1;
     int W_unroll = H_out * W_out;
 
-    if (t < C * W_unroll) {
+#define x3d(i2, i1, i0) x[(i2) * (H * W) + (i1) * (W) + i0]
+#define x_unroll2d(i1, i0) x_unroll[(i1) * (W_out*H_out) + i0]
+	
+    int c, s, h_out, w_out, h_unroll, w_unroll, w_base, p, q;
+    //int b = blockIdx.x;
+    int t = blockIdx.x*blockDim.x + threadIdx.x;
+//	if (t == 0) {
+//		printf("K:%d", K);
+//		printf("C:%d", C);
+//		printf("H:%d", H);
+//		printf("W:%d", W);
+//	}
+    
 
+    if (t < C * W_unroll) {
         c = t / W_unroll;
         s = t % W_unroll;
         h_out = s / W_out;
@@ -80,11 +86,13 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
         for(p = 0; p < K; p++){
             for(q=0; q<K; q++){
                 w_unroll = w_base + p * K + q;
-                x_unroll2d(h_unroll, w_unroll) = x3d(c, h_out + p, w_out + q); //Need to compute proper indices for this line!!
+                x_unroll2d(w_unroll, h_unroll) = x3d(c, h_out + p, w_out + q); //Need to compute proper indices for this line!!
             }
 
         }
     }
+#undef x3d
+#undef x_unroll2d
 }
 __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                   int numCRows, int numCColumns){
@@ -153,8 +161,8 @@ __global__ void forward_matmul_kernel(float* A, float* B, float* C, int numARows
     }
 	__syncthreads();
 	if ((bx == 0) && (by == 0) && (tx == 0) && (ty == 0)) {
-		printf("C: %f\n",C[0]);
-		printf("%d,%d\n",Row,Col);
+		//printf("C: %f\n",C[0]);
+		//printf("%d,%d\n",Row,Col);
 	}
 	__syncthreads();
 }
@@ -193,7 +201,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     int H_unroll = H_out * W_out;
 
     int num_threads_unroll = C * H_out * W_out;
-    int num_blocks_unroll = ceil(float(W_unroll*H_unroll)/MAX_THREADS);
+    int num_blocks_unroll = ceil(float(1.0*num_threads_unroll)/MAX_THREADS);
 
     //float *x_unroll_host; //Unrolled x matrix
     float *x_unroll_device;
@@ -205,12 +213,16 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 	int numBCols = H_out*W_out;
 	int numCRows = M;
 	int numCCols = H_out*W_out;
+	float* Y_ptr = y.dptr_;
+	float* X_ptr = x.dptr_;
     dim3 gridDim(ceil((1.0*numCCols)/TILE_WIDTH), ceil((1.0*numCRows)/TILE_WIDTH), 1);
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
-	for (int n=0; n<B; n++) {
+	for (int n=0; n<B; ++n) {
 		//printf("%c",x.dptr_);
-		unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(x.dptr_+n*C*H*W, x_unroll_device, C, H, W, K);
-		simple_matrix_mul<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr_+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+		unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(X_ptr+n*C*H*W, x_unroll_device, C, H, W, K);
+		//cudaDeviceSynchronize();
+		forward_matmul_kernel<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, Y_ptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+		//cudaDeviceSynchronize();
 	}
     
 	MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
