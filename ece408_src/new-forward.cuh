@@ -2,7 +2,7 @@
 #ifndef MXNET_OPERATOR_NEW_FORWARD_CUH_
 #define MXNET_OPERATOR_NEW_FORWARD_CUH_
 
-#define TILE_WIDTH 16
+#define TILE_WIDTH 8
 #define MAX_THREADS 1024
 
 #include <mxnet/base.h>
@@ -193,27 +193,34 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     int H_unroll = H_out * W_out;
 
     int num_threads_unroll = C * H_out * W_out;
-    int num_blocks_unroll = ceil(float(num_threads_unroll)/MAX_THREADS);
+    int num_blocks_unroll = ceil(float(W_unroll*H_unroll)/MAX_THREADS);
 
     //float *x_unroll_host; //Unrolled x matrix
     float *x_unroll_device;
     cudaMalloc((void**) &x_unroll_device, W_unroll * H_unroll * sizeof(float));
     //cudaMemcpy(x_unroll_device, x_unroll_host, W_unroll * H_unroll * sizeof(float), cudaMemcpyHostToDevice);
-    unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(x.dptr_, x_unroll_device, C, H, W, K);
-	MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
 	int numARows = M;
 	int numACols = C*K*K;
 	int numBRows = C*K*K;
 	int numBCols = H_out*W_out;
 	int numCRows = M;
 	int numCCols = H_out*W_out;
+    dim3 gridDim(ceil((1.0*numCCols)/TILE_WIDTH), ceil((1.0*numCRows)/TILE_WIDTH), 1);
+    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
+	for (int n=0; n<B; n++) {
+		//printf("%c",x.dptr_);
+		unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(x.dptr_+n*C*H*W, x_unroll_device, C, H, W, K);
+		simple_matrix_mul<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr_+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+	}
+    
+	MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
+
 	//printf("unroll:%f\n", w.dptr_[0]);
 
     //Initialize block and grid dimensions for matrix mul
-    dim3 gridDim(ceil((1.0*numCCols)/TILE_WIDTH), ceil((1.0*numCRows)/TILE_WIDTH), 1);
-    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 
-    simple_matrix_mul<<<gridDim, blockDim>>>(w.dptr_, x_unroll_device, y.dptr_, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+
+    
 
     //dim3 gridDim(B, M, Z);
     //dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
