@@ -12,7 +12,7 @@ namespace mxnet
 namespace op
 {
 
-__constant__ float kernel[MAX_KERNEL_SIZE];
+//__constant__ float kernel[MAX_KERNEL_SIZE];
 
 __global__ void forward_kernel(float *y, const float *x, const float *k, const int B, const int M, const int C, const int H, const int W, const int K)
 {
@@ -167,7 +167,7 @@ __global__ void conv_layer_kernel(int H, int W, int M, int C, int K, int W_out, 
 
 #define y4d(i3, i2, i1, i0) y[(i3) * (M * H_out * W_out) + (i2) * (H_out * W_out) + (i1) * (W_out) + i0]
 #define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
-#define k4d(i3, i2, i1, i0) k[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
+#define k4d(i3, i2, i1, i0) kernel[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
 
     __shared__ float tileMatA[TILE_WIDTH][TILE_WIDTH];
     __shared__ float tileMatB[TILE_WIDTH][TILE_WIDTH];
