@@ -56,3 +56,4 @@ commands:
     - nvprof -o timeline_final_d3_o4.nvprof python final.py 10000
     - nvprof --kernels "::conv_layer_kernel:1" --analysis-metrics -o forward1_analysis_final_o4.nvprof python final.py 10000
     - nvprof --kernels "::conv_layer_kernel:2" --analysis-metrics -o forward2_analysis_final_o4.nvprof python final.py 10000
+
