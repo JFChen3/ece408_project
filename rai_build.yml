@@ -53,7 +53,7 @@ commands:
 
     #- nvprof -o timeline_m4_d3_o2.nvprof python m4.1.py 10000 # execute code
    #- /usr/bin/time python final.py # execute code
-   python final.py 10000 
+    - python final.py 10000 
 
 
 
