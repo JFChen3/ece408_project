@@ -163,11 +163,11 @@ __global__ void forward_matmul_kernel(float* B, float* C, int numARows, int numA
 	//__syncthreads();
 }
 
-__global__ void conv_layer_kernel(int M, int C, int K, int W_out, int H_out, float* X, float* W, float* Y){
+__global__ void conv_layer_kernel(int H, int W, int M, int C, int K, int W_out, int H_out, float* x, float* k, float* y){
 
-#define Y4d(i3, i2, i1, i0) Y[(i3) * (M * H_out * W_out) + (i2) * (H_out * W_out) + (i1) * (W_out) + i0]
-#define X4d(i3, i2, i1, i0) X[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
-#define W4d(i3, i2, i1, i0) K[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
+#define y4d(i3, i2, i1, i0) y[(i3) * (M * H_out * W_out) + (i2) * (H_out * W_out) + (i1) * (W_out) + i0]
+#define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
+#define k4d(i3, i2, i1, i0) k[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
 
     __shared__ float tileMatA[TILE_WIDTH][TILE_WIDTH];
     __shared__ float tileMatB[TILE_WIDTH][TILE_WIDTH];
@@ -195,7 +195,7 @@ __global__ void conv_layer_kernel(int M, int C, int K, int W_out, int H_out, flo
         int W_h = (temp_col%(K*K))/K;
         int W_w = (temp_col%(K*K))%K;
         if (temp_col < numMatAColumns && row < M)
-            tileMatA[ty][tx] = W4d(W_m, W_c, W_h, W_w);
+            tileMatA[ty][tx] = k4d(W_m, W_c, W_h, W_w);
         else
             tileMatA[ty][tx] = 0;
 
@@ -204,7 +204,7 @@ __global__ void conv_layer_kernel(int M, int C, int K, int W_out, int H_out, flo
         int X_p = temp_row%(K*K)/K, X_q = (temp_row%(K*K))%K; 
         int X_h = column/W_out, X_w = column%W_out;
         if (temp_row < numMatAColumns && column < H_out*W_out)
-            tileMatB[ty][tx] = X4d(X_b, X_c, X_h + X_p, X_w + X_q);
+            tileMatB[ty][tx] = x4d(X_b, X_c, X_h + X_p, X_w + X_q);
         else
             tileMatB[ty][tx] = 0;
 
@@ -219,7 +219,7 @@ __global__ void conv_layer_kernel(int M, int C, int K, int W_out, int H_out, flo
         int Y_h = column / W_out, Y_w = column % W_out;
     
         if (row < M && column < W_out*H_out)
-            Y4d(Y_b, Y_m, Y_h, Y_w) = acc;
+            y4d(Y_b, Y_m, Y_h, Y_w) = acc;
 }
 /* 
    This function is called by new-inl.h
@@ -278,7 +278,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 
     dim3 gridDim(ceil((1.0*H_out*W_out)/TILE_WIDTH), ceil(M/(1.0*TILE_WIDTH)), B);
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
-	conv_layer_kernel<<<gridDim, blockDim>>>(M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
+	conv_layer_kernel<<<gridDim, blockDim>>>(H, W, M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
 		//cudaDeviceSynchronize();
 	
     
