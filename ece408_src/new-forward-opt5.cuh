@@ -29,7 +29,6 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     const int W_grid = ceil((1.0*W_out) / TILE_WIDTH);
     const int H_grid = ceil((1.0*H_out) / TILE_WIDTH);
 
-
 #define y4d(i3, i2, i1, i0) y[(i3) * (M * H_out * W_out) + (i2) * (H_out * W_out) + (i1) * (W_out) + i0]
 #define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
 #define k4d(i3, i2, i1, i0) k[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
@@ -76,7 +75,6 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
 //		printf("H:%d", H);
 //		printf("W:%d", W);
 //	}
-    
 
     if (t < C * W_unroll) {
         c = t / W_unroll;
@@ -111,9 +109,6 @@ __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, in
     	C[row*numBColumns+col] = Pvalue;
   	}
 }
-
-
-
 
 __global__ void forward_matmul_kernel(float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                      int numCRows, int numCColumns){
@@ -169,24 +164,38 @@ __global__ void forward_matmul_kernel(float* B, float* C, int numARows, int numA
 }
 
 __global__ void conv_layer_kernel(int M, int C, int K, int W_out, int H_out, float* X, float* W, float* Y){
+
+#define Y4d(i3, i2, i1, i0) Y[(i3) * (M * H_out * W_out) + (i2) * (H_out * W_out) + (i1) * (W_out) + i0]
+#define X4d(i3, i2, i1, i0) X[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
+#define W4d(i3, i2, i1, i0) K[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
+
     __shared__ float tileMatA[TILE_WIDTH][TILE_WIDTH];
     __shared__ float tileMatB[TILE_WIDTH][TILE_WIDTH];
+
     int b = blockIdx.z;
-    int tx = threadIdx.x, ty = threadIdx.y;
+    int tx = threadIdx.x; 
+    int ty = threadIdx.y;
     int row = blockIdx.y * TILE_WIDTH + ty;
     int column = blockIdx.x * TILE_WIDTH + tx;
     int numMatAColumns = C*K*K;
+
     float acc = 0.0;
+
     int num_iterations = ceil(numMatAColumns/(1.0*TILE_WIDTH));
+
     for (int i = 0; i < num_iterations; i++) {
-        int temp_col = i*TILE_WIDTH + tx, temp_row = i*TILE_WIDTH + ty;
+        int temp_col = i*TILE_WIDTH + tx;
+        int temp_row = i*TILE_WIDTH + ty;
+
         tileMatA[ty][tx] = 0;
         tileMatB[ty][tx] = 0;
+
         int W_m = row;
         int W_c = temp_col/(K*K);
-        int W_h = (temp_col%(K*K))/K, W_w = (temp_col%(K*K))%K;
+        int W_h = (temp_col%(K*K))/K;
+        int W_w = (temp_col%(K*K))%K;
         if (temp_col < numMatAColumns && row < M)
-            tileMatA[ty][tx] = W[W_m, W_c, W_h, W_w];
+            tileMatA[ty][tx] = W4d(W_m, W_c, W_h, W_w);
         else
             tileMatA[ty][tx] = 0;
 
@@ -195,7 +204,7 @@ __global__ void conv_layer_kernel(int M, int C, int K, int W_out, int H_out, flo
         int X_p = temp_row%(K*K)/K, X_q = (temp_row%(K*K))%K; 
         int X_h = column/W_out, X_w = column%W_out;
         if (temp_row < numMatAColumns && column < H_out*W_out)
-            tileMatB[ty][tx] = X[X_b, X_c, X_h + X_p, X_w + X_q];
+            tileMatB[ty][tx] = X4d(X_b, X_c, X_h + X_p, X_w + X_q);
         else
             tileMatB[ty][tx] = 0;
 
@@ -210,7 +219,7 @@ __global__ void conv_layer_kernel(int M, int C, int K, int W_out, int H_out, flo
         int Y_h = column / W_out, Y_w = column % W_out;
     
         if (row < M && column < W_out*H_out)
-            Y[Y_b, Y_m, Y_h, Y_w] = acc;
+            Y4d(Y_b, Y_m, Y_h, Y_w) = acc;
 }
 /* 
    This function is called by new-inl.h
@@ -269,7 +278,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 
     dim3 gridDim(ceil((1.0*H_out*W_out)/TILE_WIDTH), ceil(M/(1.0*TILE_WIDTH)), B);
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
-	conv_layer_kernel<<<gridDim, blockDim>>>(M, C, K, W_out, H_out, X_ptr, W_ptr, Y_ptr);
+	conv_layer_kernel<<<gridDim, blockDim>>>(M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
 		//cudaDeviceSynchronize();
 	
     

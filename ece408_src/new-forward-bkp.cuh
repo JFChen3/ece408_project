@@ -29,6 +29,7 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
     const int W_grid = ceil((1.0*W_out) / TILE_WIDTH);
     const int H_grid = ceil((1.0*H_out) / TILE_WIDTH);
 
+
 #define y4d(i3, i2, i1, i0) y[(i3) * (M * H_out * W_out) + (i2) * (H_out * W_out) + (i1) * (W_out) + i0]
 #define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
 #define k4d(i3, i2, i1, i0) k[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
@@ -55,7 +56,7 @@ __global__ void forward_kernel(float *y, const float *x, const float *k, const i
 #undef k4d
 }
 
-__global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, int K) {
+__global__ void unroll_kernel(float* x, float* x_unroll, int B, int C, int H, int W, int K) {
 /*
    Code to unroll input matrix to recast convolution layer as matrix multiply
 */
@@ -63,22 +64,26 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
     int W_out = W - K + 1;
     int W_unroll = H_out * W_out;
 
-#define x3d(i2, i1, i0) x[(i2) * (H * W) + (i1) * (W) + i0]
-#define x_unroll2d(i1, i0) x_unroll[(i1) * (W_out*H_out) + i0]
+#define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
+#define x_unroll3d(i2, i1, i0) x_unroll[(i2) * (C * H * W) + (i1) * (W_out * H_out) + i0]
+
+// #define x3d(i2, i1, i0) x[(i2) * (H * W) + (i1) * (W) + i0]
+// #define x_unroll2d(i1, i0) x_unroll[(i1) * (W_out*H_out) + i0]
 	
     int c, s, h_out, w_out, h_unroll, w_unroll, w_base, p, q;
     //int b = blockIdx.x;
-    int t = blockIdx.x*blockDim.x + threadIdx.x;
+    int tx = blockIdx.x*blockDim.x + threadIdx.x;
+    int ty = blockIdx.y*blockDim.y + threadIdx.y;
 //	if (t == 0) {
 //		printf("K:%d", K);
 //		printf("C:%d", C);
 //		printf("H:%d", H);
 //		printf("W:%d", W);
 //	}
-
-    if (t < C * W_unroll) {
-        c = t / W_unroll;
-        s = t % W_unroll;
+    
+    if (tx < C * W_unroll && ty < B) {
+        c = tx / W_unroll;
+        s = tx % W_unroll;
         h_out = s / W_out;
         w_out = s % W_out;
         h_unroll = h_out * W_out + w_out;
@@ -86,13 +91,13 @@ __global__ void unroll_kernel(float* x, float* x_unroll, int C, int H, int W, in
         for(p = 0; p < K; p++){
             for(q=0; q<K; q++){
                 w_unroll = w_base + p * K + q;
-                x_unroll2d(w_unroll, h_unroll) = x3d(c, h_out + p, w_out + q); //Need to compute proper indices for this line!!
+                x_unroll3d(ty, w_unroll, h_unroll) = x4d(ty, c, h_out + p, w_out + q);
             }
 
         }
     }
-#undef x3d
-#undef x_unroll2d
+#undef x4d
+#undef x_unroll3d
 }
 __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
                                   int numCRows, int numCColumns){
@@ -110,117 +115,52 @@ __global__ void simple_matrix_mul(float* A, float* B, float* C, int numARows, in
   	}
 }
 
-__global__ void forward_matmul_kernel(float* B, float* C, int numARows, int numAColumns, int numBRows, int numBColumns,
+
+
+
+__global__ void forward_matmul_kernel(float* X, float* Y, int B, int numARows, int numAColumns, int numBRows, int numBColumns,
                                      int numCRows, int numCColumns){
 /* Forward pass using matrix multiplication
 */
 
-    //__shared__ float subTileA[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float subTileB[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float subTileX[TILE_WIDTH][TILE_WIDTH];
 
     int bx = blockIdx.x;
     int by = blockIdx.y;
+    int bz = blockIdx.z;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
+    int tz = threadIdx.z;
 
     int Row = by * TILE_WIDTH + ty;
     int Col = bx * TILE_WIDTH + tx;
+    int Bdim = bz * blockDim.z + tz;
 
     float Pvalue = 0;
 
-  // Loop over the M and N tiles required to compute the P element
-  // The code assumes that the Width is a multiple of TILE_WIDTH!
     for (int m = 0; m < (numAColumns-1)/TILE_WIDTH + 1; ++m) {
-        // Collaborative loading of M and N tiles into shared memory
-        //if(Row < numARows && m*TILE_WIDTH+tx < numAColumns) {
-        //  subTileA[ty][tx] = A[Row*numAColumns + m*TILE_WIDTH+tx];
-        //}
-        //else {
-        //  subTileA[ty][tx] = 0;
-        //}
-        if (m*TILE_WIDTH+ty < numBRows && Col < numBColumns) {
-          subTileB[ty][tx] = B[(m*TILE_WIDTH+ty)*numBColumns+Col];
+        if (m*TILE_WIDTH+ty < numBRows && Col < numBColumns && Bdim < B) {
+          subTileX[ty][tx] = X[Bdim*(numBRows*numBColumns)+(m*TILE_WIDTH+ty)*numBColumns+Col];
         }
         else {
-          subTileB[ty][tx] = 0;
+          subTileX[ty][tx] = 0;
         }
         __syncthreads();
         if (Row < numCRows && Col < numCColumns) {
           for (int k = 0; k < TILE_WIDTH; ++k) {
-                Pvalue += kernel[Row*numAColumns+m*TILE_WIDTH+k] * subTileB[k][tx];
+                Pvalue += kernel[Row*numAColumns+m*TILE_WIDTH+k] * subTileX[k][tx];
           }
         }
         __syncthreads();
     }
-    if (Row < numCRows && Col < numCColumns) {
-		C[Row*numCColumns+Col] = Pvalue;
+    if (Row < numCRows && Col < numCColumns && Bdim < B) {
+		Y[Bdim*(numCRows*numCColumns) + Row*numCColumns+Col] = Pvalue;
     }
 	__syncthreads();
-	//if ((bx == 0) && (by == 0) && (tx == 0) && (ty == 0)) {
-		//printf("C: %f\n",C[0]);
-		//printf("%d,%d\n",Row,Col);
-	//}
-	//__syncthreads();
+
 }
 
-__global__ void conv_layer_kernel(int H, int W, int M, int C, int K, int W_out, int H_out, float* x, float* k, float* y){
 
-#define y4d(i3, i2, i1, i0) y[(i3) * (M * H_out * W_out) + (i2) * (H_out * W_out) + (i1) * (W_out) + i0]
-#define x4d(i3, i2, i1, i0) x[(i3) * (C * H * W) + (i2) * (H * W) + (i1) * (W) + i0]
-#define k4d(i3, i2, i1, i0) k[(i3) * (C * K * K) + (i2) * (K * K) + (i1) * (K) + i0]
-
-    __shared__ float tileMatA[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float tileMatB[TILE_WIDTH][TILE_WIDTH];
-
-    int b = blockIdx.z;
-    int tx = threadIdx.x; 
-    int ty = threadIdx.y;
-    int row = blockIdx.y * TILE_WIDTH + ty;
-    int column = blockIdx.x * TILE_WIDTH + tx;
-    int numMatAColumns = C*K*K;
-
-    float acc = 0.0;
-
-    int num_iterations = ceil(numMatAColumns/(1.0*TILE_WIDTH));
-
-    for (int i = 0; i < num_iterations; i++) {
-        int temp_col = i*TILE_WIDTH + tx;
-        int temp_row = i*TILE_WIDTH + ty;
-
-        tileMatA[ty][tx] = 0;
-        tileMatB[ty][tx] = 0;
-
-        int W_m = row;
-        int W_c = temp_col/(K*K);
-        int W_h = (temp_col%(K*K))/K;
-        int W_w = (temp_col%(K*K))%K;
-        if (temp_col < numMatAColumns && row < M)
-            tileMatA[ty][tx] = k4d(W_m, W_c, W_h, W_w);
-        else
-            tileMatA[ty][tx] = 0;
-
-        int X_b = b;
-        int X_c = temp_row/(K*K);
-        int X_p = temp_row%(K*K)/K, X_q = (temp_row%(K*K))%K; 
-        int X_h = column/W_out, X_w = column%W_out;
-        if (temp_row < numMatAColumns && column < H_out*W_out)
-            tileMatB[ty][tx] = x4d(X_b, X_c, X_h + X_p, X_w + X_q);
-        else
-            tileMatB[ty][tx] = 0;
-
-        __syncthreads();
-        for (int q = 0; q < TILE_WIDTH; q++)
-            acc += tileMatA[ty][q] * tileMatB[q][tx];
-        __syncthreads();
-    }
-
-        int Y_b = b;
-        int Y_m = row;
-        int Y_h = column / W_out, Y_w = column % W_out;
-    
-        if (row < M && column < W_out*H_out)
-            y4d(Y_b, Y_m, Y_h, Y_w) = acc;
-}
 /* 
    This function is called by new-inl.h
    Any code you write should be executed by this function.
@@ -245,42 +185,59 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     const int W_out = W - K + 1;
 
     // Set the kernel dimensions
-    //const int W_grid = ceil((1.0*W_out) / TILE_WIDTH);
-    //const int H_grid = ceil((1.0*H_out) / TILE_WIDTH);
-    //const int Z = H_grid * W_grid;
+    const int W_grid = ceil((1.0*W_out) / TILE_WIDTH);
+    const int H_grid = ceil((1.0*H_out) / TILE_WIDTH);
+    const int Z = H_grid * W_grid;
 
     //Unroll matrix
-    //int W_unroll = C * K * K;
-    //int H_unroll = H_out * W_out;
+    int W_unroll = C * K * K;
+    int H_unroll = H_out * W_out;
 
-    //int num_threads_unroll = C * H_out * W_out;
-    //int num_blocks_unroll = ceil(float(1.0*num_threads_unroll)/MAX_THREADS);
+    int num_threads_unroll = C * H_out * W_out;
+    int num_blocks_unroll = ceil(float(1.0*num_threads_unroll)/MAX_THREADS);
 
     //float *x_unroll_host; //Unrolled x matrix
-    //float *x_unroll_device;
-    //cudaMalloc((void**) &x_unroll_device, W_unroll * H_unroll * sizeof(float));
+    float *x_unroll_device;
+    cudaMalloc((void**) &x_unroll_device, B * W_unroll * H_unroll * sizeof(float));
 
-	//int numARows = M;
-	//int numACols = C*K*K;
-	//int numBRows = C*K*K;
-	//int numBCols = H_out*W_out;
-	//int numCRows = M;
-	//int numCCols = H_out*W_out;
-	//float* Y_ptr = y.dptr_;
-	//float* X_ptr = x.dptr_;
-    //float* W_ptr = w.dptr_;
+	int numARows = M;
+	int numACols = C*K*K;
+	int numBRows = C*K*K;
+	int numBCols = H_out*W_out;
+	int numCRows = M;
+	int numCCols = H_out*W_out;
+	float* Y_ptr = y.dptr_;
+	float* X_ptr = x.dptr_;
 
-    //printf("numARows is %d\n", numARows);
-    //printf("numACols is %d\n", numACols);
-    //printf("K is %d\n", K);
+    printf("numARows is %d\n", numARows);
+    printf("numACols is %d\n", numACols);
+    printf("K is %d\n", K);
 
-    //cudaMemcpyToSymbol(kernel, w.dptr_, sizeof(float)*numARows*numACols); //Store kernel in constant memory
+    cudaMemcpyToSymbol(kernel, w.dptr_, sizeof(float)*numARows*numACols); //Store kernel in constant memory
 
-    dim3 gridDim(ceil((1.0*H_out*W_out)/TILE_WIDTH), ceil(M/(1.0*TILE_WIDTH)), B);
-    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
-	conv_layer_kernel<<<gridDim, blockDim>>>(H, W, M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
+    dim3 blockDimUnroll;
+    dim3 gridDimUnroll;
+    dim3 blockDimMatMul;
+    dim3 gridDimMatMul;
+
+    blockDimUnroll = dim3(32, 32, 1);
+    gridDimUnroll = dim3(ceil(1.0*C*H_out*W_out/32.0), ceil(1.0*B/32), 1);
+
+    blockDimMatMul = dim3(TILE_WIDTH, TILE_WIDTH, 1);
+    gridDimMatMul = dim3(ceil((1.0*numCCols)/TILE_WIDTH), ceil((1.0*numCRows)/TILE_WIDTH), B);
+
+    unroll_kernel<<<gridDimUnroll, blockDimUnroll>>>(X_ptr, x_unroll_device, B, C, H, W, K);
+
+    printf("Unroll done");
+    forward_matmul_kernel<<<gridDimMatMul, blockDimMatMul>>>(x_unroll_device, Y_ptr, B, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+
+	//for (int n=0; n<B; ++n) {
+		//printf("%c",x.dptr_);
+	//	unroll_kernel<<<num_blocks_unroll, MAX_THREADS>>>(X_ptr+n*C*H*W, x_unroll_device, C, H, W, K);
 		//cudaDeviceSynchronize();
-	
+	//	forward_matmul_kernel<<<gridDim, blockDim>>>(x_unroll_device, Y_ptr+n*M*H_out*W_out, numARows, numACols, numBRows, numBCols, numCRows, numCCols);
+		//cudaDeviceSynchronize();
+	//}
     
 	MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
 
