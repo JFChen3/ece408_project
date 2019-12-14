@@ -53,8 +53,10 @@ commands:
 
     #- nvprof -o timeline_m4_d3_o2.nvprof python m4.1.py 10000 # execute code
     #- /usr/bin/time python final.py 10000 # execute code
-    #- nvprof -o timeline_final_d3_const.nvprof python final.py 10000
-    #- nvprof --kernels "::conv_layer_kernel:1" --analysis-metrics -o forward1_analysis_final_const.nvprof python final.py 10000
-    #- nvprof --kernels "::conv_layer_kernel:2" --analysis-metrics -o forward2_analysis_final_const.nvprof python final.py 10000
+    #- nvprof -o timeline_final_d3_const_tile32.nvprof python final.py 10000
+    #- nvprof --kernels "::conv_layer_kernel:1" --analysis-metrics -o forward1_analysis_final_const_tile32.nvprof python final.py 10000
+    #- nvprof --kernels "::conv_layer_kernel:2" --analysis-metrics -o forward2_analysis_final_const_tile32.nvprof python final.py 10000
+    - python final.py 100
+    - python final.py 1000
     - python final.py 10000
 
