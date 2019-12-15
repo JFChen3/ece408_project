@@ -1,7 +1,7 @@
 #ifndef MXNET_OPERATOR_NEW_FORWARD_CUH_
 #define MXNET_OPERATOR_NEW_FORWARD_CUH_
 
-#define TILE_WIDTH 64
+#define TILE_WIDTH 24
 #define MAX_THREADS 1024
 #define MAX_KERNEL_SIZE 7200
 
@@ -179,7 +179,6 @@ __global__ void conv_layer_kernel(int H, int W, int M, int C, int K, int W_out, 
     int column = blockIdx.x * TILE_WIDTH + tx;
     int numMatAColumns = C*K*K;
 
-
     float acc = 0.0;
 
     int num_iterations = ceil(numMatAColumns/(1.0*TILE_WIDTH));
@@ -279,7 +278,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     //cudaMemcpyToSymbol(kernel, w.dptr_, sizeof(float)*numARows*numACols); //Store kernel in constant memory
 
     dim3 gridDim(ceil((1.0*H_out*W_out)/TILE_WIDTH), ceil(M/(1.0*TILE_WIDTH)), B);
-    dim3 blockDim(TILE_WIDTH, 1, 1);
+    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 	conv_layer_kernel<<<gridDim, blockDim>>>(H, W, M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
 		//cudaDeviceSynchronize();
 	
@@ -300,7 +299,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
     //forward_kernel<<<gridDim, blockDim>>>(y.dptr_,x.dptr_,w.dptr_, B,M,C,H,W,K);
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
-    //MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
+    MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
 
 }
 
