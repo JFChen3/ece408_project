@@ -4,6 +4,14 @@
 #define TILE_WIDTH_1 16
 #define TILE_WIDTH_2 24
 
+// 0.021195
+// 0.051714
+
+// with unrolls
+//0.021171
+// 0.049716
+
+// 68.911ms
 
 #include <mxnet/base.h>
 
@@ -22,7 +30,7 @@ __global__ void conv_layer_kernel1(int H, int W, int M, int C, int K, int W_out,
     __shared__ float tileMatB[TILE_WIDTH_1][TILE_WIDTH_1];
 
     int b = blockIdx.z;
-    int tx = threadIdx.x; 
+    int tx = threadIdx.x;
     int ty = threadIdx.y;
     int row = blockIdx.y * TILE_WIDTH_1 + ty;
     int column = blockIdx.x * TILE_WIDTH_1 + tx;
@@ -44,30 +52,45 @@ __global__ void conv_layer_kernel1(int H, int W, int M, int C, int K, int W_out,
         int W_c = temp_col/(K*K);
         int W_h = (temp_col%(K*K))/K;
         int W_w = (temp_col%(K*K))%K;
-        if (temp_col < numMatAColumns && row < M)
-            tileMatA[ty][tx] = k4d(W_m, W_c, W_h, W_w);
-        else
+        float tempMatA = 0;
+        if (temp_col < numMatAColumns && row < M) {
+            tempMatA = k4d(W_m, W_c, W_h, W_w);
+            tileMatA[ty][tx] = tempMatA;
+        }
+        else {
             tileMatA[ty][tx] = 0;
+            tempMatA = 0;
+        }
 
         int X_b = b;
         int X_c = temp_row/(K*K);
-        int X_p = temp_row%(K*K)/K, X_q = (temp_row%(K*K))%K; 
+        int X_p = temp_row%(K*K)/K, X_q = (temp_row%(K*K))%K;
         int X_h = column/W_out, X_w = column%W_out;
-        if (temp_row < numMatAColumns && column < H_out*W_out)
-            tileMatB[ty][tx] = x4d(X_b, X_c, X_h + X_p, X_w + X_q);
-        else
+        float tempMatB = 0;
+        if (temp_row < numMatAColumns && column < H_out*W_out) {
+            tempMatB = x4d(X_b, X_c, X_h + X_p, X_w + X_q);
+            tileMatB[ty][tx] = tempMatB;
+        }
+        else {
             tileMatB[ty][tx] = 0;
+            tempMatB = 0;
+        }
 
         __syncthreads();
-        for (int q = 0; q < TILE_WIDTH_1; q++)
-            acc += tileMatA[ty][q] * tileMatB[q][tx];
+        #pragma unroll
+        for (int q = 0; q < TILE_WIDTH_1; q++) {
+            if (q == ty && q == tx) acc += tempMatA * tempMatB;
+            else if (q == ty) acc += tileMatA[ty][q] * tempMatB;
+            else if (q == tx) acc += tempMatA * tileMatB[q][tx];
+            else acc += tileMatA[ty][q] * tileMatB[q][tx];
+        }
         __syncthreads();
     }
 
         int Y_b = b;
         int Y_m = row;
         int Y_h = column / W_out, Y_w = column % W_out;
-    
+
         if (row < M && column < W_out*H_out)
             y4d(Y_b, Y_m, Y_h, Y_w) = acc;
 }
@@ -82,7 +105,7 @@ __global__ void conv_layer_kernel2(int H, int W, int M, int C, int K, int W_out,
     __shared__ float tileMatB[TILE_WIDTH_2][TILE_WIDTH_2];
 
     int b = blockIdx.z;
-    int tx = threadIdx.x; 
+    int tx = threadIdx.x;
     int ty = threadIdx.y;
     int row = blockIdx.y * TILE_WIDTH_2 + ty;
     int column = blockIdx.x * TILE_WIDTH_2 + tx;
@@ -104,35 +127,52 @@ __global__ void conv_layer_kernel2(int H, int W, int M, int C, int K, int W_out,
         int W_c = temp_col/(K*K);
         int W_h = (temp_col%(K*K))/K;
         int W_w = (temp_col%(K*K))%K;
-        if (temp_col < numMatAColumns && row < M)
-            tileMatA[ty][tx] = k4d(W_m, W_c, W_h, W_w);
-        else
+        float tempMatA = 0;
+        if (temp_col < numMatAColumns && row < M) {
+            tempMatA = k4d(W_m, W_c, W_h, W_w);
+            tileMatA[ty][tx] = tempMatA;
+        }
+        else {
             tileMatA[ty][tx] = 0;
+            tempMatA = 0;
+        }
 
         int X_b = b;
         int X_c = temp_row/(K*K);
-        int X_p = temp_row%(K*K)/K, X_q = (temp_row%(K*K))%K; 
+        int X_p = temp_row%(K*K)/K, X_q = (temp_row%(K*K))%K;
         int X_h = column/W_out, X_w = column%W_out;
-        if (temp_row < numMatAColumns && column < H_out*W_out)
-            tileMatB[ty][tx] = x4d(X_b, X_c, X_h + X_p, X_w + X_q);
-        else
+
+
+        float tempMatB = 0;
+        if (temp_row < numMatAColumns && column < H_out*W_out){
+            tempMatB = x4d(X_b, X_c, X_h + X_p, X_w + X_q);
+            tileMatB[ty][tx] = tempMatB;
+          }
+        else {
             tileMatB[ty][tx] = 0;
+            tempMatB = 0;
+        }
 
         __syncthreads();
-        for (int q = 0; q < TILE_WIDTH_2; q++)
-            acc += tileMatA[ty][q] * tileMatB[q][tx];
+        #pragma unroll
+        for (int q = 0; q < TILE_WIDTH_2; q++) {
+            if (q == ty && q == tx) acc += tempMatA * tempMatB;
+            else if (q == ty) acc += tileMatA[ty][q] * tempMatB;
+            else if (q == tx) acc += tempMatA * tileMatB[q][tx];
+            else acc += tileMatA[ty][q] * tileMatB[q][tx];
+        }
         __syncthreads();
-    }
+        }
 
         int Y_b = b;
         int Y_m = row;
         int Y_h = column / W_out, Y_w = column % W_out;
-    
+
         if (row < M && column < W_out*H_out)
             y4d(Y_b, Y_m, Y_h, Y_w) = acc;
 }
 
-/* 
+/*
    This function is called by new-inl.h
    Any code you write should be executed by this function.
    For ECE408, we only expect the float version of the operator to be called, so here we specialize with only floats.
@@ -159,16 +199,16 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 
     dim3 gridDim(ceil((1.0*H_out*W_out)/TILE_WIDTH_2), ceil(M/(1.0*TILE_WIDTH_2)), B);
     dim3 blockDim(TILE_WIDTH_2, TILE_WIDTH_2, 1);
-	conv_layer_kernel2<<<gridDim, blockDim>>>(H, W, M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
-	MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
+    conv_layer_kernel2<<<gridDim, blockDim>>>(H, W, M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
+    MSHADOW_CUDA_CALL(cudaDeviceSynchronize());
     }
 
     else{
     dim3 gridDim(ceil((1.0*H_out*W_out)/TILE_WIDTH_1), ceil(M/(1.0*TILE_WIDTH_1)), B);
     dim3 blockDim(TILE_WIDTH_1, TILE_WIDTH_1, 1);
     conv_layer_kernel1<<<gridDim, blockDim>>>(H, W, M, C, K, W_out, H_out, x.dptr_, w.dptr_, y.dptr_);
-    
-    
+
+
     MSHADOW_CUDA_CALL(cudaDeviceSynchronize());}
 
     // Use MSHADOW_CUDA_CALL to check for CUDA runtime errors.
@@ -176,7 +216,7 @@ void forward<gpu, float>(mshadow::Tensor<gpu, 4, float> &y, const mshadow::Tenso
 
 }
 
-/* 
+/*
     This tells mxnet how to do an op when it's not a float.
     This is not used in the ECE408 project
 */
